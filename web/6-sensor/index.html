@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>NailStrain 6-SG Interface</title>
+  <style>
+    :root{
+      --bg:#f8fafc; --fg:#0f172a; --muted:#64748b; --border:#cbd5e1;
+      --c1:#1f77b4; --c2:#ff7f0e; --c3:#2ca02c; --c4:#d62728;
+      --success:#10b981; --danger:#ef4444; --card-bg:#ffffff;
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0; font-family:'Segoe UI', system-ui, sans-serif;
+      background:var(--bg); color:var(--fg); overflow:hidden;
+    }
+
+    header{
+      display:flex; align-items:center; justify-content:space-between;
+      padding:0 24px; height:56px; background:var(--card-bg);
+      border-bottom:1px solid var(--border); box-shadow:0 1px 3px rgba(0,0,0,0.05);
+    }
+    .group{ display:flex; gap:12px; align-items:center; }
+
+    button{
+      border:1px solid var(--border); background:var(--card-bg); color:var(--fg);
+      padding:8px 16px; border-radius:8px; font-weight:700; font-size:13px;
+      cursor:pointer; display:flex; align-items:center; gap:8px;
+      transition:all 0.15s ease; box-shadow:0 1px 2px rgba(0,0,0,0.05);
+    }
+    button:hover{ background:#f1f5f9; border-color:var(--fg); }
+    button:active{ transform:translateY(1px); box-shadow:none; }
+    button:disabled{ opacity:0.3; cursor:not-allowed; }
+    button#btnConnect.connected{ background:var(--success); color:white; border-color:var(--success); }
+    button#btnFolder.selected{ background:var(--success); color:white; border-color:var(--success); }
+    button#btnRecord.active{ border-color:var(--danger); color:var(--danger); background:#fff1f2; }
+
+    .dot{ width:8px; height:8px; background:var(--danger); border-radius:50%; display:none; }
+    .active .dot{ display:block; animation:blink 0.8s infinite alternate; }
+    @keyframes blink{ from{ opacity:0.3; } to{ opacity:1; } }
+
+    #statRate{ font-size:19px; font-weight:900; min-width:84px; }
+    #serialStatus{ font-size:13px; font-weight:800; color:var(--muted); }
+    #serialStatus.bad{ color:var(--danger); }
+
+    main{ padding:10px 16px 14px; height:calc(100vh - 56px);
+          display:flex; flex-direction:column; gap:8px; }
+    .row{ flex:1; display:flex; align-items:stretch; gap:10px; min-height:0; }
+    .sgLabel{
+      width:52px; display:flex; align-items:center; justify-content:center;
+      font-size:17px; font-weight:900; color:var(--fg);
+    }
+    .plotWrap{ flex:1; border-radius:8px;
+               background:#fff; position:relative; overflow:hidden; min-width:0; }
+    canvas{ width:100%; height:100%; display:block; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="group">
+      <button id="btnConnect">Connect</button>
+      <div id="statRate">0 Hz</div>
+      <div id="serialStatus">Waiting</div>
+    </div>
+    <div class="group">
+      <button id="btnFolder">Select Folder</button>
+      <button id="btnRecord" disabled><div class="dot"></div>Record</button>
+    </div>
+  </header>
+
+  <main id="rows"></main>
+
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const BAUD = 2000000;
+  const CAP = 4000;
+  const NUM_BOARDS = 3;
+  const CHANNELS_PER_BOARD = 8;
+  const TOTAL_CHANNELS = NUM_BOARDS * CHANNELS_PER_BOARD;   // 24
+  const NUM_PANELS = 6;            // SG1..SG6, 4 channels each
+  const CH_PER_PANEL = 4;
+  const COLORS = ['#1f77b4','#ff7f0e','#2ca02c','#d62728'];
+
+  // panel p (0..5): board = p>>1, channels = board*8 + (p&1)*4 + 0..3
+  const panelChannels = p => {
+    const base = (p >> 1) * CHANNELS_PER_BOARD + (p & 1) * CH_PER_PANEL;
+    return [base, base + 1, base + 2, base + 3];
+  };
+
+  let port = null, reader = null, keepReading = false;
+  let t0 = null, head = 0, size = 0;
+  let spanHold = Array(NUM_PANELS).fill(1000);
+  let lastSpikeTime = Array(NUM_PANELS).fill(0);
+  let dirHandle = null, writableStream = null, isRecording = false;
+  let latestStatus = 'OOO';
+
+  const ch = Array.from({ length: TOTAL_CHANNELS }, () => new Float32Array(CAP));
+  const chValid = Array.from({ length: TOTAL_CHANNELS }, () => new Uint8Array(CAP));
+  const ts = new Float64Array(CAP);
+  const avgBuf = Array.from({ length: TOTAL_CHANNELS }, () => []);
+  const dispVal = Array(TOTAL_CHANNELS).fill(null);
+
+  // ---- build 6 rows ----
+  const rowsRoot = $('#rows');
+  for (let p = 0; p < NUM_PANELS; p++) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = `<div class="sgLabel">SG${p+1}</div>
+      <div class="plotWrap"><canvas id="plot${p}"></canvas></div>`;
+    rowsRoot.appendChild(row);
+  }
+  const canvases = Array.from({ length: NUM_PANELS }, (_, p) => $(`#plot${p}`));
+  const contexts = canvases.map(c => c.getContext('2d', { alpha: false }));
+
+  function resize(){
+    const dpr = window.devicePixelRatio || 1;
+    canvases.forEach((canvas, i) => {
+      canvas.width = canvas.clientWidth * dpr;
+      canvas.height = canvas.clientHeight * dpr;
+      contexts[i].setTransform(dpr, 0, 0, dpr, 0, 0);
+    });
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ---- serial ----
+  async function disconnect() {
+    keepReading = false;
+    if (reader) { try { await reader.cancel(); await reader.releaseLock(); } catch(e){} reader = null; }
+    if (port) { try { await port.close(); } catch(e){} port = null; }
+    $('#btnConnect').textContent = 'Connect';
+    $('#btnConnect').classList.remove('connected');
+    $('#btnRecord').disabled = true;
+    if (isRecording) stopRecording();
+  }
+
+  async function connect(p) {
+    if (port) await disconnect();
+    try {
+      port = p;
+      await port.open({ baudRate: BAUD });
+      $('#btnConnect').textContent = 'Connected';
+      $('#btnConnect').classList.add('connected');
+      $('#btnRecord').disabled = false;
+      readLoop();
+    } catch (e) { console.error(e); port = null; }
+  }
+
+  $('#btnConnect').onclick = async () => {
+    if (port) { await disconnect(); }
+    else {
+      try { connect(await navigator.serial.requestPort()); } catch (e) {}
+    }
+  };
+
+  async function readLoop() {
+    keepReading = true;
+    const decoder = new TextDecoder();
+    let partial = '';
+    try {
+      while (keepReading && port && port.readable) {
+        reader = port.readable.getReader();
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done || !keepReading) break;
+            partial += decoder.decode(value, { stream: true });
+            let lines = partial.split('\n');
+            partial = lines.pop();
+            for (let line of lines) handleLine(line.trim());
+          }
+        } finally { reader.releaseLock(); }
+      }
+    } catch (e) { disconnect(); }
+  }
+
+  let sampleCounter = 0;
+  function handleLine(line) {
+    if (line.startsWith('#')) { console.log(line); return; } // firmware diagnostics
+    const statusMatch = line.match(/^S:([OTRCX]+),/);
+    latestStatus = statusMatch ? statusMatch[1] : 'LEGACY';
+    $('#serialStatus').textContent = latestStatus;
+    $('#serialStatus').classList.toggle('bad', latestStatus !== 'OOO' && latestStatus !== 'LEGACY');
+    const m = line.match(/-?\d+/g);
+    if (!m || m.length < TOTAL_CHANNELS) return;
+    const vals = m.slice(-TOTAL_CHANNELS).map(Number);
+
+    const nowSec = performance.now() / 1000.0;
+    if (t0 === null) t0 = nowSec;
+
+    for (let i = 0; i < TOTAL_CHANNELS; i++) {
+      ch[i][head] = vals[i];
+      chValid[i][head] = 1;
+    }
+    ts[head] = nowSec;
+    head = (head + 1) % CAP;
+    if (size < CAP) size++;
+    sampleCounter++;
+
+    if (isRecording && writableStream) {
+      writableStream.write(`${(nowSec - t0).toFixed(4)},${latestStatus},${vals.join(',')}\n`);
+    }
+
+    for (let i = 0; i < TOTAL_CHANNELS; i++) {
+      avgBuf[i].push(vals[i]);
+      if (avgBuf[i].length > 5) avgBuf[i].shift();
+    }
+  }
+
+  setInterval(() => {
+    for (let i = 0; i < TOTAL_CHANNELS; i++) {
+      dispVal[i] = avgBuf[i].length
+        ? Math.round(avgBuf[i].reduce((a,b)=>a+b,0) / avgBuf[i].length) : null;
+    }
+  }, 80);
+
+  setInterval(() => {
+    $('#statRate').textContent = `${sampleCounter} Hz`;
+    sampleCounter = 0;
+  }, 1000);
+
+  // ---- recording ----
+  $('#btnFolder').onclick = async () => {
+    try {
+      dirHandle = await window.showDirectoryPicker();
+      const btn = $('#btnFolder');
+      btn.textContent = `Folder: ${dirHandle.name}`;
+      btn.classList.add('selected');
+    } catch (e) {}
+  };
+
+  async function startRecording() {
+    if (!dirHandle) {
+      try {
+        dirHandle = await window.showDirectoryPicker();
+        $('#btnFolder').textContent = `Folder: ${dirHandle.name}`;
+        $('#btnFolder').classList.add('selected');
+      } catch (e) { return; }
+    }
+    const names = [];
+    for (let p = 0; p < NUM_PANELS; p++)
+      for (let c = 0; c < CH_PER_PANEL; c++) names.push(`SG${p+1}_CH${c+1}`);
+    // column order in the CSV matches serial order (board-major), remap:
+    const header = [];
+    for (let i = 0; i < TOTAL_CHANNELS; i++) {
+      const board = Math.floor(i / CHANNELS_PER_BOARD);
+      const local = i % CHANNELS_PER_BOARD;
+      const p = board * 2 + (local >= CH_PER_PANEL ? 1 : 0);
+      header.push(`SG${p+1}_CH${(local % CH_PER_PANEL) + 1}`);
+    }
+    const file = await dirHandle.getFileHandle(`SixSG_${Date.now()}.csv`, { create: true });
+    writableStream = await file.createWritable();
+    await writableStream.write(`Time_s,Status,${header.join(',')}\n`);
+    isRecording = true;
+    $('#btnRecord').classList.add('active');
+  }
+
+  async function stopRecording() {
+    isRecording = false;
+    $('#btnRecord').classList.remove('active');
+    if (writableStream) {
+      try { await writableStream.close(); } catch (e) {}
+      writableStream = null;
+    }
+  }
+  $('#btnRecord').onclick = () => isRecording ? stopRecording() : startRecording();
+
+  // ---- drawing ----
+  function getNiceStep(range) {
+    const idealStep = range / 3;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(idealStep)));
+    const residual = idealStep / magnitude;
+    if (residual > 5) return 5 * magnitude;
+    if (residual > 2) return 2 * magnitude;
+    return magnitude;
+  }
+
+  function drawPanel(p) {
+    const canvas = canvases[p];
+    const ctx = contexts[p];
+    const W = canvas.clientWidth, H = canvas.clientHeight;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, W, H);
+
+    const isBottom = (p === NUM_PANELS - 1);
+    const L = 64, R = 8, T = 4, B = isBottom ? 22 : 6;
+    const pW = W - L - R, pH = H - T - B;
+    if (pW < 20 || pH < 20) return;
+
+    // scan window == plotted window (keeps autoscale honest)
+    const viewSize = Math.min(size, Math.max(2, Math.floor(pW)));
+    const sIdx = (head - viewSize + CAP) % CAP;
+    const chans = panelChannels(p);
+
+    let maxAbsVal = 0;
+    for (let k = 0; k < viewSize; k++) {
+      const i = (sIdx + k) % CAP;
+      for (const g of chans) {
+        if (chValid[g][i]) maxAbsVal = Math.max(maxAbsVal, Math.abs(ch[g][i]));
+      }
+    }
+    let target = Math.ceil((maxAbsVal * 1.25 + 50) / 100) * 100;
+    if (target < 500) target = 500;
+    if (spanHold[p] === null || target > spanHold[p]) {
+      spanHold[p] = target;
+      lastSpikeTime[p] = performance.now();
+    } else if (target < spanHold[p] * 0.6 && performance.now() - lastSpikeTime[p] > 3000) {
+      spanHold[p] = target;
+    }
+
+    const centerY = T + pH / 2;
+    const yMap = v => centerY - (v / spanHold[p]) * (pH / 2);
+
+    // y grid
+    const yStep = getNiceStep(spanHold[p]);
+    ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign = 'right';
+    for (let v = 0; v <= spanHold[p] + 1; v += yStep) {
+      [v, -v].forEach((val, idx) => {
+        if (idx === 1 && val === 0) return;
+        const y = yMap(val);
+        if (y < T - 1 || y > T + pH + 1) return;
+        if (Math.abs(val) < 0.1) {
+          ctx.strokeStyle = '#000'; ctx.setLineDash([]); ctx.lineWidth = 1.8;
+        } else {
+          ctx.strokeStyle = '#c3cdd9'; ctx.setLineDash([5, 5]); ctx.lineWidth = 1;
+        }
+        ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(W - R, y); ctx.stroke();
+        ctx.fillStyle = '#000';
+        ctx.fillText(Math.round(val), L - 8, y + 4);
+      });
+    }
+
+    // x grid (+ time axis with tick marks on the bottom panel)
+    ctx.setLineDash([5, 5]); ctx.strokeStyle = '#c3cdd9'; ctx.lineWidth = 1;
+    ctx.textAlign = 'center';
+    if (size > 0) {
+      const tEnd = ts[(head - 1 + CAP) % CAP] - t0;
+      const tStart = ts[sIdx] - t0;
+      for (let i = 0; i < 8; i++) {
+        const frac = i / 7;
+        const x = L + frac * pW;
+        ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, T + pH); ctx.stroke();
+        if (isBottom) {
+          ctx.setLineDash([]);
+          ctx.strokeStyle = '#000'; ctx.lineWidth = 1.5;
+          ctx.beginPath();                       // tick mark
+          ctx.moveTo(x, T + pH);
+          ctx.lineTo(x, T + pH + 5);
+          ctx.stroke();
+          ctx.fillStyle = '#000';
+          // keep edge labels inside the canvas: align first left, last right
+          ctx.textAlign = (i === 0) ? 'left' : (i === 7) ? 'right' : 'center';
+          ctx.fillText((tStart + frac * (tEnd - tStart)).toFixed(1) + 's', x, T + pH + 17);
+          ctx.textAlign = 'center';
+          ctx.strokeStyle = '#c3cdd9'; ctx.lineWidth = 1;
+          ctx.setLineDash([5, 5]);
+        }
+      }
+    }
+
+    // plot frame
+    ctx.setLineDash([]);
+    ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2;
+    ctx.strokeRect(L, T, pW, pH);
+
+    // traces (hard-clipped to the frame)
+    if (size > 2) {
+      ctx.save();
+      ctx.beginPath(); ctx.rect(L, T, pW, pH); ctx.clip();
+      chans.forEach((g, ci) => {
+        ctx.strokeStyle = COLORS[ci]; ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        let started = false;
+        for (let k = 0; k < viewSize; k++) {
+          const i = (sIdx + k) % CAP;
+          if (!chValid[g][i]) { started = false; continue; }
+          const x = L + (k / (viewSize - 1)) * pW;
+          const y = yMap(ch[g][i]);
+          started ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+          started = true;
+        }
+        ctx.stroke();
+      });
+      ctx.restore();
+    }
+
+    // live values, top-right inside the frame
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'right';
+    let x = W - R - 8;
+    for (let ci = CH_PER_PANEL - 1; ci >= 0; ci--) {
+      const v = dispVal[chans[ci]];
+      const txt = (v === null) ? '-' : String(v);
+      ctx.fillStyle = COLORS[ci];
+      ctx.fillText(txt, x, T + 16);
+      x -= ctx.measureText(txt).width + 18;
+    }
+  }
+
+  function draw() {
+    for (let p = 0; p < NUM_PANELS; p++) drawPanel(p);
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
+</script>
+</body>
+</html>

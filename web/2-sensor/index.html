@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Nail Sensor — 2 Sensors</title>
+  <style>
+    :root{
+      --bg:#f8fafc; --fg:#0f172a; --muted:#64748b; --border:#cbd5e1;
+      --c1:#1f77b4; --c2:#ff7f0e; --c3:#2ca02c; --c4:#d62728;
+      --c5:#9467bd; --c6:#8c564b; --c7:#17becf; --c8:#7f7f7f;
+      --success:#10b981; --danger:#ef4444; --card-bg:#ffffff;
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0; font-family: 'Segoe UI', system-ui, sans-serif;
+      background:var(--bg); color:var(--fg); overflow: hidden;
+    }
+
+    header{
+      display:flex; align-items:center; justify-content:space-between;
+      padding:0 24px; height: 64px; background:var(--card-bg);
+      border-bottom:1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .group{ display:flex; gap:12px; align-items:center; }
+
+    button {
+      border: 1px solid var(--border); background: var(--card-bg); color: var(--fg);
+      padding: 8px 16px; border-radius: 8px; font-weight: 700; font-size: 13px;
+      cursor: pointer; display: flex; align-items:center; gap: 8px;
+      transition: all 0.15s ease;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+    button:hover { background: #f1f5f9; border-color: var(--fg); }
+    button:active { transform: translateY(1px); box-shadow: none; }
+    button:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    button#btnConnect.connected { background: var(--success); color: white; border-color: var(--success); }
+    button#btnFolder.selected { background: var(--success); color: white; border-color: var(--success); }
+    button#btnRecord.active { border-color: var(--danger); color: var(--danger); background: #fff1f2; }
+    #serialStatus{ font-size:13px; font-weight:800; color:var(--muted); }
+    #serialStatus.bad{ color:var(--danger); }
+    
+    .dot { width: 8px; height: 8px; background: var(--danger); border-radius: 50%; display: none; }
+    .active .dot { display: block; animation: blink 0.8s infinite alternate; }
+    @keyframes blink { from { opacity: 0.3; } to { opacity: 1; } }
+
+    main{ padding: 16px; height: calc(100vh - 64px); display: flex; flex-direction: column; gap: 16px; }
+
+    .metrics{ display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .metricGroup{
+      display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px;
+      padding: 12px; border: 1px solid var(--border); border-radius: 8px;
+      background: #ffffff;
+    }
+    .card{
+      background: var(--card-bg); border-radius: 8px; padding: 10px 12px;
+      border: 1px solid var(--border); transition: all 0.2s; cursor: pointer;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+      min-width: 0;
+    }
+    .card:hover { border-color: var(--fg); box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+    .card .label{ font-size: 11px; font-weight: 800; color: var(--muted); margin-bottom: 2px; text-transform: uppercase; }
+    .card .value{ font-size: 24px; font-weight: 900; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+    .ch1 .value { color: var(--c1); } .ch2 .value { color: var(--c2); } 
+    .ch3 .value { color: var(--c3); } .ch4 .value { color: var(--c4); }
+    .ch5 .value { color: var(--c5); } .ch6 .value { color: var(--c6); } 
+    .ch7 .value { color: var(--c7); } .ch8 .value { color: var(--c8); }
+    .card.off { opacity: 0.3; background: #f1f5f9; }
+
+    .plotWrap{ flex: 1; border: 2px solid var(--fg); border-radius: 8px; background: #fff; position: relative; overflow: hidden; min-height: 320px; }
+    canvas{ width:100%; height:100%; display:block; }
+
+    @media (max-width: 1100px) {
+      .metrics{ grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 720px) {
+      header{ padding: 0 12px; }
+      main{ padding: 12px; gap: 12px; }
+      .metricGroup{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .card .value{ font-size: 22px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="group">
+      <button id="btnConnect">Connect</button>
+      <div id="serialStatus">Waiting</div>
+    </div>
+    <div class="group">
+      <button id="btnFolder">Select Folder</button>
+      <button id="btnRecord" disabled><div class="dot"></div>Record</button>
+      <div style="font-size:14px; font-weight:900; color:black; min-width:65px; text-align:right" id="statRate">0 Hz</div>
+    </div>
+  </header>
+
+  <main>
+    <section class="metrics">
+      <div class="metricGroup">
+        <div class="card ch1" data-ch="0"><div class="label">CH1</div><div class="value" id="ch1">—</div></div>
+        <div class="card ch2" data-ch="1"><div class="label">CH2</div><div class="value" id="ch2">—</div></div>
+        <div class="card ch3" data-ch="2"><div class="label">CH3</div><div class="value" id="ch3">—</div></div>
+        <div class="card ch4" data-ch="3"><div class="label">CH4</div><div class="value" id="ch4">—</div></div>
+      </div>
+      <div class="metricGroup">
+        <div class="card ch5" data-ch="4"><div class="label">CH5</div><div class="value" id="ch5">—</div></div>
+        <div class="card ch6" data-ch="5"><div class="label">CH6</div><div class="value" id="ch6">—</div></div>
+        <div class="card ch7" data-ch="6"><div class="label">CH7</div><div class="value" id="ch7">—</div></div>
+        <div class="card ch8" data-ch="7"><div class="label">CH8</div><div class="value" id="ch8">—</div></div>
+      </div>
+    </section>
+    <section class="plotWrap"><canvas id="plot"></canvas></section>
+  </main>
+
+<script>
+(() => {
+	  const $ = s => document.querySelector(s);
+	  const BAUD = 2000000;
+	  const CAP = 4000; 
+      const NUM_CHANNELS = 8;
+      const CHANNEL_GROUPS = [
+        { label: 'Sensor 1', channels: [0, 1, 2, 3] },
+        { label: 'Sensor 2', channels: [4, 5, 6, 7] }
+      ];
+
+	  let port = null, reader = null, keepReading = false;
+	  let t0 = null, head = 0, size = 0;
+	  let chEnabled = Array(NUM_CHANNELS).fill(true);
+	  let spanHold = CHANNEL_GROUPS.map(() => 1000);
+      let lastSpikeTime = CHANNEL_GROUPS.map(() => 0);
+	  let dirHandle = null, writableStream = null, isRecording = false;
+      let latestStatus = 'O';
+
+	  const ch = Array.from({ length: NUM_CHANNELS }, () => new Float32Array(CAP));
+      const chValid = Array.from({ length: NUM_CHANNELS }, () => new Uint8Array(CAP));
+	  const ts = new Float64Array(CAP);
+	  const avgBuf = Array.from({ length: NUM_CHANNELS }, () => []);
+
+  const canvas = $('#plot');
+  const ctx = canvas.getContext('2d', { alpha: false });
+  function resize(){
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = canvas.clientWidth * dpr;
+    canvas.height = canvas.clientHeight * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // --- SERIAL LOGIC ---
+  async function disconnect() {
+    keepReading = false;
+    if (reader) { try { await reader.cancel(); await reader.releaseLock(); } catch(e){} reader = null; }
+    if (port) { try { await port.close(); } catch(e){} port = null; }
+    $('#btnConnect').textContent = "Connect";
+    $('#btnConnect').classList.remove('connected');
+    $('#btnRecord').disabled = true;
+    if(isRecording) stopRecording();
+  }
+
+  async function connect(p) {
+    if (port) await disconnect();
+    try {
+      port = p;
+      await port.open({ baudRate: BAUD });
+      $('#btnConnect').textContent = "Connected";
+      $('#btnConnect').classList.add('connected');
+      $('#btnRecord').disabled = false;
+      readLoop();
+    } catch (e) { console.error(e); port = null; }
+  }
+
+  $('#btnConnect').onclick = async () => {
+    if (port) { await disconnect(); } 
+    else { try { const p = await navigator.serial.requestPort(); connect(p); } catch (e) {} }
+  };
+
+  async function readLoop() {
+    keepReading = true;
+    const decoder = new TextDecoder();
+    let partial = '';
+    try {
+      while (keepReading && port && port.readable) {
+        reader = port.readable.getReader();
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done || !keepReading) break;
+            partial += decoder.decode(value, { stream: true });
+            let lines = partial.split('\n');
+            partial = lines.pop();
+            for (let line of lines) handleLine(line.trim());
+          }
+        } finally { reader.releaseLock(); }
+      }
+    } catch (e) { disconnect(); }
+  }
+
+	  let sampleCounter = 0;
+	  function handleLine(line) {
+	    if (line.startsWith('#')) { console.log(line); return; } // 固件诊断行
+        const statusMatch = line.match(/^S:([OTRCX]+),/);
+        latestStatus = statusMatch ? statusMatch[1] : 'LEGACY';
+        $('#serialStatus').textContent = latestStatus;
+        $('#serialStatus').classList.toggle('bad', latestStatus !== 'O' && latestStatus !== 'LEGACY');
+	    const m = line.match(/-?\d+/g);
+	    if (!m || m.length < NUM_CHANNELS) return;
+        const rawVals = m.slice(-NUM_CHANNELS).map(Number);
+        const vals = Array(NUM_CHANNELS).fill(null);
+        rawVals.forEach((v, i) => { vals[i] = v; });
+	    const nowSec = performance.now() / 1000.0;
+	    if (t0 === null) t0 = nowSec;
+
+	    for(let i=0; i<NUM_CHANNELS; i++) {
+          if(vals[i] === null) {
+            chValid[i][head] = 0;
+          } else {
+            ch[i][head] = vals[i];
+            chValid[i][head] = 1;
+          }
+        }
+	    ts[head] = nowSec;
+	    head = (head + 1) % CAP;
+	    if (size < CAP) size++;
+	    sampleCounter++;
+
+	    if(isRecording && writableStream) {
+	      writableStream.write(`${(nowSec-t0).toFixed(4)},${latestStatus},${vals.map(v => v === null ? '' : v).join(',')}\n`);
+	    }
+
+	    for(let i=0; i<NUM_CHANNELS; i++) {
+          if(vals[i] === null) {
+            avgBuf[i] = [];
+          } else {
+	        avgBuf[i].push(vals[i]);
+	        if(avgBuf[i].length > 5) avgBuf[i].shift();
+          }
+	    }
+	  }
+
+	  // --- UI UPDATES ---
+	  setInterval(() => {
+	    for(let i=0; i<NUM_CHANNELS; i++) {
+	      const el = $(`#ch${i+1}`);
+	      if(!chEnabled[i]) { el.textContent = '—'; continue; }
+	      if(avgBuf[i].length > 0) {
+	        const avg = avgBuf[i].reduce((a,b)=>a+b,0) / avgBuf[i].length;
+	        el.textContent = Math.round(avg);
+	      } else {
+            el.textContent = '—';
+          }
+	    }
+	  }, 80);
+
+  setInterval(() => {
+    $('#statRate').textContent = `${sampleCounter} Hz`;
+    sampleCounter = 0;
+  }, 1000);
+
+  $('#btnFolder').onclick = async () => {
+    try { 
+      dirHandle = await window.showDirectoryPicker(); 
+      const btn = $('#btnFolder');
+      btn.textContent = `📁 ${dirHandle.name}`; 
+      btn.classList.add('selected');
+    } catch (e) {}
+  };
+
+  async function startRecording() {
+    if(!dirHandle) { 
+      try { 
+        dirHandle = await window.showDirectoryPicker(); 
+        $('#btnFolder').textContent = `📁 ${dirHandle.name}`; 
+        $('#btnFolder').classList.add('selected');
+      } catch(e) { return; } 
+	    }
+	    const file = await dirHandle.getFileHandle(`Data_${Date.now()}.csv`, { create: true });
+	    writableStream = await file.createWritable();
+	    await writableStream.write("Time_s,Status,SG1_CH1,SG1_CH2,SG1_CH3,SG1_CH4,SG2_CH1,SG2_CH2,SG2_CH3,SG2_CH4\n");
+    isRecording = true;
+    $('#btnRecord').classList.add('active');
+  }
+
+  async function stopRecording() {
+    isRecording = false;
+    $('#btnRecord').classList.remove('active');
+    if(writableStream) { try { await writableStream.close(); } catch(e){} writableStream = null; }
+  }
+
+  $('#btnRecord').onclick = () => isRecording ? stopRecording() : startRecording();
+
+  document.querySelectorAll('.card').forEach(card => {
+    const idx = parseInt(card.dataset.ch);
+    card.onclick = () => {
+	      chEnabled[idx] = !chEnabled[idx];
+	      card.classList.toggle('off', !chEnabled[idx]);
+	      spanHold = CHANNEL_GROUPS.map(() => null);
+	    };
+	  });
+
+	  // --- RENDERING ENGINE ---
+	  const COLORS = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#17becf','#7f7f7f'];
+  
+  function getNiceStep(range) {
+    // 目标：在总范围内（-span 到 +span）分成 6 到 10 个区间
+    // 也就是在单侧（0 到 span）分成 3 到 5 个区间
+    const idealStep = range / 4; 
+    const magnitude = Math.pow(10, Math.floor(Math.log10(idealStep)));
+    const residual = idealStep / magnitude;
+    
+    if (residual > 5) return 5 * magnitude;
+    if (residual > 2) return 2 * magnitude;
+    return magnitude;
+  }
+
+	  function draw() {
+	    const W = canvas.clientWidth, H = canvas.clientHeight;
+	    ctx.clearRect(0,0,W,H);
+	    ctx.fillStyle = '#fff'; ctx.fillRect(0,0,W,H);
+
+	    const L=85, R=30, T=30, B=45, panelGap=34;
+        const pW = W-L-R;
+        const pH = Math.max(90, (H - T - B - panelGap) / 2);
+
+	    // 缩放扫描窗口必须与绘图窗口一致，否则可见数据可能超出量程出框
+	    const viewSize = Math.min(size, Math.max(2, Math.floor(pW)));
+	    const sIdx = (head - viewSize + CAP) % CAP;
+        CHANNEL_GROUPS.forEach((group, groupIndex) => {
+          const panelTop = T + groupIndex * (pH + panelGap);
+
+	      // 1. 计算当前组的最大绝对值量程
+	      let maxAbsVal = 0;
+	      for(let k=0; k<viewSize; k++) {
+	        const i = (sIdx + k) % CAP;
+	        for(const c of group.channels) {
+	          if(chEnabled[c] && chValid[c][i]) maxAbsVal = Math.max(maxAbsVal, Math.abs(ch[c][i]));
+	        }
+	      }
+	      
+	      // 自动量程：留 20% 余量，最小 500
+	      let target = Math.ceil((maxAbsVal * 1.25 + 50) / 100) * 100;
+	      if(target < 500) target = 500;
+
+	      // 平滑缩放逻辑
+	      if(spanHold[groupIndex] === null || target > spanHold[groupIndex]) { 
+	        spanHold[groupIndex] = target; 
+	        lastSpikeTime[groupIndex] = performance.now(); 
+	      } else if (target < spanHold[groupIndex] * 0.6 && performance.now() - lastSpikeTime[groupIndex] > 3000) { 
+	        spanHold[groupIndex] = target; 
+	      }
+
+	      // 2. 映射函数：0点固定在每组图的中心
+	      const centerY = panelTop + pH/2;
+	      const yMap = v => centerY - (v / spanHold[groupIndex]) * (pH / 2);
+
+	      // 3. 绘制 Y 轴网格（强制 0 线居中且对称）
+	      const yStep = getNiceStep(spanHold[groupIndex]);
+	      ctx.font = 'bold 13px sans-serif';
+	      ctx.textAlign = 'right';
+	      
+	      // 循环从 0 向上下绘制，确保对称
+	      for(let v = 0; v <= spanHold[groupIndex] + 1; v += yStep) {
+	        [v, -v].forEach((val, index) => {
+	          if(index === 1 && val === 0) return; // 避免 0 重合绘制
+	          
+	          const y = yMap(val);
+	          if(y < panelTop - 1 || y > panelTop + pH + 1) return;
+
+	          if (Math.abs(val) < 0.1) { 
+	            // 0刻度：黑色加粗实线
+	            ctx.strokeStyle = '#000000';
+	            ctx.setLineDash([]);
+	            ctx.lineWidth = 2.5;
+	          } else {
+	            // 其他刻度：灰色虚线
+	            ctx.strokeStyle = '#e2e8f0';
+	            ctx.setLineDash([5, 5]);
+	            ctx.lineWidth = 1;
+	          }
+	          
+	          ctx.beginPath(); ctx.moveTo(L,y); ctx.lineTo(W-R,y); ctx.stroke();
+	          
+	          // 刻度值：黑色加粗
+	          ctx.fillStyle = '#000000'; 
+	          ctx.fillText(Math.round(val), L-15, y+5);
+	        });
+	      }
+
+	      // 4. 绘制 X 轴网格
+	      ctx.setLineDash([5, 5]); ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1;
+	      ctx.textAlign = 'center'; 
+	      if(size > 0) {
+	        const tEnd = ts[(head - 1 + CAP) % CAP] - t0;
+	        const tStart = ts[sIdx] - t0;
+	        for(let i=0; i<10; i++) {
+	          const frac = i / 9;
+	          const x = L + frac * pW;
+	          const timeVal = tStart + frac * (tEnd - tStart);
+	          
+	          ctx.beginPath(); ctx.moveTo(x, panelTop); ctx.lineTo(x, panelTop+pH); ctx.stroke();
+	          ctx.setLineDash([]); 
+	          ctx.fillStyle = '#000000';
+	          ctx.font = 'bold 13px sans-serif';
+	          ctx.fillText(timeVal.toFixed(1) + 's', x, panelTop + pH + 24);
+	          ctx.setLineDash([5, 5]);
+	        }
+	      }
+
+	      // 5. 边框与分组标签
+	      ctx.setLineDash([]);
+	      ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2; 
+	      ctx.strokeRect(L, panelTop, pW, pH);
+          ctx.fillStyle = '#0f172a';
+          ctx.font = 'bold 13px sans-serif';
+          ctx.textAlign = 'left';
+          ctx.fillText(group.label, L + 10, panelTop + 20);
+
+	      // 6. 曲线
+	      if(size > 2) {
+	        // 与上方量程扫描使用同一窗口
+	        const plotPts = viewSize;
+	        const sPtIdx = sIdx;
+	        // 硬裁剪：曲线绝不画出黑框
+	        ctx.save();
+	        ctx.beginPath();
+	        ctx.rect(L, panelTop, pW, pH);
+	        ctx.clip();
+	        for(const c of group.channels) {
+	          if(!chEnabled[c]) continue;
+	          ctx.strokeStyle = COLORS[c]; ctx.lineWidth = 2.2; ctx.beginPath();
+              let started = false;
+	          for(let k=0; k<plotPts; k++) {
+	            const i = (sPtIdx + k) % CAP;
+                if(!chValid[c][i]) {
+                  started = false;
+                  continue;
+                }
+	            const x = L + (k / (plotPts-1)) * pW;
+	            const y = yMap(ch[c][i]);
+	            started ? ctx.lineTo(x,y) : ctx.moveTo(x,y);
+                started = true;
+	          }
+	          ctx.stroke();
+	        }
+	        ctx.restore();
+	      }
+        });
+	    requestAnimationFrame(draw);
+	  }
+  draw();
+})();
+</script>
+</body>
+</html>
