@@ -11,8 +11,8 @@ NumPy/Pandas workflows, long experiments, or integration with other equipment.
 
 ```text
 firmware/
-  2-sensor/   Teensy firmware: 1 ADC board, 2 sensors, 8 values
-  6-sensor/   Teensy firmware: 3 ADC boards, 6 sensors, 24 values
+  ADS1263_2Sensor/   Teensy firmware: 1 ADC board, 2 sensors, 8 values
+  ADS1263_6Sensor/   Teensy firmware: 3 ADC boards, 6 sensors, 24 values
 web/
   2-sensor/   Browser live display and CSV recorder
   6-sensor/   Browser live display and CSV recorder
