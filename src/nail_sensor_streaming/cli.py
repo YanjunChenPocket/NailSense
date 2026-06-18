@@ -126,7 +126,7 @@ def stream(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Stream UIUC nail-sensor data to CSV."
+        description="Record NailSense data to CSV."
     )
     parser.add_argument("--port", help="Serial port, such as COM4 or /dev/cu.usbmodem...")
     parser.add_argument(

@@ -1,3 +1,3 @@
-"""Tools for streaming UIUC nail-sensor data."""
+"""Tools for recording NailSense data."""
 
 __version__ = "0.1.0"

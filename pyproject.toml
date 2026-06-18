@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nail-sensor-streaming"
 version = "0.1.0"
-description = "Serial streaming, live plotting, and CSV recording for the UIUC nail sensors"
+description = "CSV recording tools for NailSense sensors"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
