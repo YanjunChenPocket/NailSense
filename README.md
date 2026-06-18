@@ -39,19 +39,19 @@ Python 3.9 or newer is required.
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
-nail-stream --list-ports
+nailsense --list-ports
 ```
 
 Record 2CH:
 
 ```bash
-nail-stream --port /dev/cu.usbmodemXXXX --sensors 2
+nailsense --port /dev/cu.usbmodemXXXX --sensors 2
 ```
 
 Record 6CH:
 
 ```bash
-nail-stream --port /dev/cu.usbmodemXXXX --sensors 6
+nailsense --port /dev/cu.usbmodemXXXX --sensors 6
 ```
 
 On Windows, use a port such as `COM4`. Press `Ctrl+C` to stop recording.

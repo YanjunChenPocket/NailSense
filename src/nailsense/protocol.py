@@ -1,4 +1,4 @@
-"""Parser and channel naming for the nail-sensor serial protocol."""
+"""Parser and channel naming for the NailSense serial protocol."""
 
 from dataclasses import dataclass
 

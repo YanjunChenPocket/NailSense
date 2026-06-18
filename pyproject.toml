@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "nail-sensor-streaming"
+name = "nailsense"
 version = "0.1.0"
 description = "CSV recording tools for NailSense sensors"
 readme = "README.md"
@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-nail-stream = "nail_sensor_streaming.cli:main"
+nailsense = "nailsense.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

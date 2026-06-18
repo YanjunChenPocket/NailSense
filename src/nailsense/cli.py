@@ -37,7 +37,7 @@ def choose_port(requested: str | None) -> str:
 
 def default_output() -> Path:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return Path("recordings") / f"nail_sensor_{stamp}.csv"
+    return Path("recordings") / f"NailSense_{stamp}.csv"
 
 
 def write_header(writer: csv.writer, sensor_count: int) -> None:
