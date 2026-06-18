@@ -27,6 +27,17 @@ def channel_names(sensor_count: int) -> list[str]:
     ]
 
 
+def abnormal_status(status: str) -> str:
+    """Return only abnormal board states; healthy ``O`` states stay blank."""
+    if not status or status == "LEGACY":
+        return ""
+    return " ".join(
+        f"B{board}:{flag}"
+        for board, flag in enumerate(status, start=1)
+        if flag != "O"
+    )
+
+
 def parse_line(line: str, expected_sensors: int | None = None) -> DataFrame | None:
     """Parse one firmware line.
 

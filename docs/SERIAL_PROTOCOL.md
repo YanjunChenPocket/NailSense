@@ -38,6 +38,16 @@ There is one status character per ADC board. One board serves two sensors:
 The 2-sensor version has one status character and 8 values. The 6-sensor
 version has three status characters and 24 values.
 
+The firmware still transmits status internally. The web interface displays
+only abnormal states, including their board number, for example `B2:T`.
+Status is not written to CSV.
+
+Web and Python CSV files use the same layout:
+
+```text
+Sequence,Time_s,SG1_CH1,SG1_CH2,...
+```
+
 ## Diagnostic lines
 
 Lines beginning with `#` are diagnostics and must not be interpreted as

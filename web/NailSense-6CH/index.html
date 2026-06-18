@@ -93,7 +93,8 @@
   let spanHold = Array(NUM_PANELS).fill(1000);
   let lastSpikeTime = Array(NUM_PANELS).fill(0);
   let dirHandle = null, writableStream = null, isRecording = false;
-  let latestStatus = 'OOO';
+  let recordingStartSec = 0, recordingSequence = 0;
+  let latestStatus = '';
 
   const ch = Array.from({ length: TOTAL_CHANNELS }, () => new Float32Array(CAP));
   const chValid = Array.from({ length: TOTAL_CHANNELS }, () => new Uint8Array(CAP));
@@ -176,12 +177,20 @@
   }
 
   let sampleCounter = 0;
+  function abnormalStatus(flags) {
+    if (!flags || flags === 'LEGACY') return '';
+    return [...flags]
+      .map((flag, index) => flag === 'O' ? '' : `B${index + 1}:${flag}`)
+      .filter(Boolean)
+      .join(' ');
+  }
+
   function handleLine(line) {
     if (line.startsWith('#')) { console.log(line); return; } // firmware diagnostics
     const statusMatch = line.match(/^S:([OTRCX]+),/);
-    latestStatus = statusMatch ? statusMatch[1] : 'LEGACY';
+    latestStatus = abnormalStatus(statusMatch ? statusMatch[1] : '');
     $('#serialStatus').textContent = latestStatus;
-    $('#serialStatus').classList.toggle('bad', latestStatus !== 'OOO' && latestStatus !== 'LEGACY');
+    $('#serialStatus').classList.toggle('bad', latestStatus !== '');
     const m = line.match(/-?\d+/g);
     if (!m || m.length < TOTAL_CHANNELS) return;
     const vals = m.slice(-TOTAL_CHANNELS).map(Number);
@@ -199,7 +208,8 @@
     sampleCounter++;
 
     if (isRecording && writableStream) {
-      writableStream.write(`${(nowSec - t0).toFixed(4)},${latestStatus},${vals.join(',')}\n`);
+      recordingSequence++;
+      writableStream.write(`${recordingSequence},${(nowSec - recordingStartSec).toFixed(6)},${vals.join(',')}\n`);
     }
 
     for (let i = 0; i < TOTAL_CHANNELS; i++) {
@@ -230,6 +240,13 @@
     } catch (e) {}
   };
 
+  function fileTimestamp() {
+    const d = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_` +
+           `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  }
+
   async function startRecording() {
     if (!dirHandle) {
       try {
@@ -249,9 +266,11 @@
       const p = board * 2 + (local >= CH_PER_PANEL ? 1 : 0);
       header.push(`SG${p+1}_CH${(local % CH_PER_PANEL) + 1}`);
     }
-    const file = await dirHandle.getFileHandle(`SixSG_${Date.now()}.csv`, { create: true });
+    const file = await dirHandle.getFileHandle(`NailSense_6CH_${fileTimestamp()}.csv`, { create: true });
     writableStream = await file.createWritable();
-    await writableStream.write(`Time_s,Status,${header.join(',')}\n`);
+    await writableStream.write(`Sequence,Time_s,${header.join(',')}\n`);
+    recordingStartSec = performance.now() / 1000.0;
+    recordingSequence = 0;
     isRecording = true;
     $('#btnRecord').classList.add('active');
   }

@@ -3,19 +3,18 @@
 This repository contains the Teensy firmware and host-side tools for the
 2-sensor and 6-sensor nail measurement systems.
 
-The browser interface is the easiest option for live visualization and CSV
-recording. The Python tool is included for teams that want scripted recording,
-NumPy/Pandas workflows, long experiments, or integration with other equipment.
+The browser interface provides live visualization and CSV recording. The
+Python tool is a lightweight CSV recorder for scripted or long experiments.
 
 ## Repository contents
 
 ```text
 firmware/
-  ADS1263_2Sensor/   Teensy firmware: 1 ADC board, 2 sensors, 8 values
-  ADS1263_6Sensor/   Teensy firmware: 3 ADC boards, 6 sensors, 24 values
+  NailSense-2CH/   Teensy firmware: 1 ADC board, 2 sensors, 8 values
+  NailSense-6CH/   Teensy firmware: 3 ADC boards, 6 sensors, 24 values
 web/
-  2-sensor/   Browser live display and CSV recorder
-  6-sensor/   Browser live display and CSV recorder
+  NailSense-2CH/   Browser live display and CSV recorder
+  NailSense-6CH/   Browser live display and CSV recorder
 src/          Python streaming package
 docs/         Serial protocol and channel map
 ```
@@ -46,16 +45,16 @@ Python 3.9 or newer is required.
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e ".[plot]"
+pip install -e .
 nail-stream --list-ports
-nail-stream --port /dev/cu.usbmodemXXXX --sensors 6 --plot
+nail-stream --port /dev/cu.usbmodemXXXX --sensors 6
 ```
 
 On Windows:
 
 ```powershell
 .venv\Scripts\activate
-nail-stream --port COM4 --sensors 2 --plot
+nail-stream --port COM4 --sensors 2
 ```
 
 The sensor count can also be detected automatically:
@@ -71,8 +70,9 @@ with:
 nail-stream --port COM4 --output experiment_01.csv
 ```
 
-Press `Ctrl+C` to stop safely. The CSV includes host UTC time, elapsed time,
-frame number, board status, and all measurement channels.
+Press `Ctrl+C` to stop safely. Web and Python recordings use the same columns:
+`Sequence`, `Time_s`, followed by the sensor channels. Every recording starts
+at sequence 1 and time 0.
 
 ## Firmware and hardware
 
@@ -93,18 +93,11 @@ register verification, timeout recovery, and unexpected-reset detection.
 
 - Keep sensors unloaded during the three-second startup baseline.
 - A firmware reinitialization does not repeat the baseline calibration.
-- Status other than `O` identifies a frame affected by a communication or ADC
-  recovery event. Keep the status column when processing data.
+- Healthy status is hidden on the web page. Errors are shown on the page with
+  their board number, such as `B2:T` or `B3:C`, but are not added to the CSV.
 - The output is electrical strain-sensor signal in `µV`, not force. Converting
   to force requires the appropriate calibration model.
 - Stacked board connectors should be firmly seated before long experiments.
 
 See [the serial protocol](docs/SERIAL_PROTOCOL.md) and
 [the channel map](docs/CHANNEL_MAP.md) for details.
-
-## Verify the Python parser
-
-```bash
-pip install -e ".[dev]"
-pytest
-```

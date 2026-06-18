@@ -130,7 +130,8 @@
 	  let spanHold = CHANNEL_GROUPS.map(() => 1000);
       let lastSpikeTime = CHANNEL_GROUPS.map(() => 0);
 	  let dirHandle = null, writableStream = null, isRecording = false;
-      let latestStatus = 'O';
+      let recordingStartSec = 0, recordingSequence = 0;
+      let latestStatus = '';
 
 	  const ch = Array.from({ length: NUM_CHANNELS }, () => new Float32Array(CAP));
       const chValid = Array.from({ length: NUM_CHANNELS }, () => new Uint8Array(CAP));
@@ -198,12 +199,20 @@
   }
 
 	  let sampleCounter = 0;
+      function abnormalStatus(flags) {
+        if (!flags || flags === 'LEGACY') return '';
+        return [...flags]
+          .map((flag, index) => flag === 'O' ? '' : `B${index + 1}:${flag}`)
+          .filter(Boolean)
+          .join(' ');
+      }
+
 	  function handleLine(line) {
 	    if (line.startsWith('#')) { console.log(line); return; } // 固件诊断行
         const statusMatch = line.match(/^S:([OTRCX]+),/);
-        latestStatus = statusMatch ? statusMatch[1] : 'LEGACY';
+        latestStatus = abnormalStatus(statusMatch ? statusMatch[1] : '');
         $('#serialStatus').textContent = latestStatus;
-        $('#serialStatus').classList.toggle('bad', latestStatus !== 'O' && latestStatus !== 'LEGACY');
+        $('#serialStatus').classList.toggle('bad', latestStatus !== '');
 	    const m = line.match(/-?\d+/g);
 	    if (!m || m.length < NUM_CHANNELS) return;
         const rawVals = m.slice(-NUM_CHANNELS).map(Number);
@@ -226,7 +235,8 @@
 	    sampleCounter++;
 
 	    if(isRecording && writableStream) {
-	      writableStream.write(`${(nowSec-t0).toFixed(4)},${latestStatus},${vals.map(v => v === null ? '' : v).join(',')}\n`);
+          recordingSequence++;
+	      writableStream.write(`${recordingSequence},${(nowSec-recordingStartSec).toFixed(6)},${vals.map(v => v === null ? '' : v).join(',')}\n`);
 	    }
 
 	    for(let i=0; i<NUM_CHANNELS; i++) {
@@ -267,6 +277,13 @@
     } catch (e) {}
   };
 
+  function fileTimestamp() {
+    const d = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_` +
+           `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  }
+
   async function startRecording() {
     if(!dirHandle) { 
       try { 
@@ -275,9 +292,11 @@
         $('#btnFolder').classList.add('selected');
       } catch(e) { return; } 
 	    }
-	    const file = await dirHandle.getFileHandle(`Data_${Date.now()}.csv`, { create: true });
+	    const file = await dirHandle.getFileHandle(`NailSense_2CH_${fileTimestamp()}.csv`, { create: true });
 	    writableStream = await file.createWritable();
-	    await writableStream.write("Time_s,Status,SG1_CH1,SG1_CH2,SG1_CH3,SG1_CH4,SG2_CH1,SG2_CH2,SG2_CH3,SG2_CH4\n");
+	    await writableStream.write("Sequence,Time_s,SG1_CH1,SG1_CH2,SG1_CH3,SG1_CH4,SG2_CH1,SG2_CH2,SG2_CH3,SG2_CH4\n");
+    recordingStartSec = performance.now() / 1000.0;
+    recordingSequence = 0;
     isRecording = true;
     $('#btnRecord').classList.add('active');
   }
